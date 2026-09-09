@@ -1,0 +1,17 @@
+[Unit]
+Description=chezmoi-autosync: auto-push chezmoi changes to a review branch
+Documentation=https://github.com/bootswithdefer/chezmoi-autosync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/chezmoi-autosync
+Restart=on-failure
+RestartSec=10
+
+# Reasonable defaults — override in ~/.config/systemd/user/chezmoi-autosync.service.d/override.conf
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
