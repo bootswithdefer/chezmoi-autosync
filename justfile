@@ -48,3 +48,33 @@ install:
     systemctl --user daemon-reload
     systemctl --user enable --now chezmoi-autosync
     systemctl --user status --no-pager chezmoi-autosync
+
+# Tag and push a release for the current pyproject.toml version (bump first, e.g. `uv version 0.2.0`)
+release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(uv version --short)"
+    tag="v${version}"
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [ "$branch" != "main" ]; then
+        echo "error: releases must be cut from 'main' (on '$branch')" >&2
+        exit 1
+    fi
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "error: working tree is dirty; commit or stash first" >&2
+        exit 1
+    fi
+    git fetch --quiet origin
+    if [ -n "$(git rev-list "origin/main..HEAD")" ] || [ -n "$(git rev-list "HEAD..origin/main")" ]; then
+        echo "error: local main is not in sync with origin/main" >&2
+        exit 1
+    fi
+    if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+        echo "error: tag ${tag} already exists" >&2
+        exit 1
+    fi
+    echo "Tagging ${tag} at $(git rev-parse --short HEAD) and pushing..."
+    git tag -a "${tag}" -m "${tag}"
+    git push origin "${tag}"
+    echo "Pushed ${tag}. Approve the 'pypi' environment in the Actions run to publish."
+
