@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import signal
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -56,6 +57,26 @@ class TestBuildParser:
         args = parser.parse_args(["--verbose"])
         assert args.verbose is True
 
+    def test_once_default_false(self) -> None:
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.once is False
+
+    def test_once_flag(self) -> None:
+        parser = _build_parser()
+        args = parser.parse_args(["--once"])
+        assert args.once is True
+
+    def test_dry_run_default_false(self) -> None:
+        parser = _build_parser()
+        args = parser.parse_args([])
+        assert args.dry_run is False
+
+    def test_dry_run_flag(self) -> None:
+        parser = _build_parser()
+        args = parser.parse_args(["--dry-run"])
+        assert args.dry_run is True
+
     def test_version(self, capsys: pytest.CaptureFixture[str]) -> None:
         parser = _build_parser()
         with pytest.raises(SystemExit, match="0"):
@@ -95,6 +116,26 @@ class TestMain:
         assert kwargs["remote"] == "upstream"
         assert kwargs["branch"] == "my/branch"
         assert kwargs["debounce_seconds"] == 15.0
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_dry_run_defaults_false(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run.side_effect = KeyboardInterrupt
+
+        main([])
+
+        assert mock_daemon_cls.call_args[1]["dry_run"] is False
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_dry_run_passed_to_daemon(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run.side_effect = KeyboardInterrupt
+
+        main(["--dry-run"])
+
+        assert mock_daemon_cls.call_args[1]["dry_run"] is True
 
     @patch("chezmoi_autosync.cli.Daemon")
     def test_exits_on_file_not_found(self, mock_daemon_cls: MagicMock) -> None:
@@ -165,3 +206,97 @@ class TestMain:
         with patch("chezmoi_autosync.cli.logging.basicConfig") as mock_config:
             main([])
             assert mock_config.call_args[1]["level"] == logging.INFO
+
+
+# ---------------------------------------------------------------------------
+# main --once
+# ---------------------------------------------------------------------------
+
+
+class TestMainOnce:
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_calls_run_once_not_run(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.return_value = True
+
+        main(["--once"])
+
+        mock_daemon.run_once.assert_called_once()
+        mock_daemon.run.assert_not_called()
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_dry_run_uses_run_once_and_passes_dry_run(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.return_value = True
+
+        main(["--once", "--dry-run"])
+
+        assert mock_daemon_cls.call_args[1]["dry_run"] is True
+        mock_daemon.run_once.assert_called_once()
+        mock_daemon.run.assert_not_called()
+
+    @patch("chezmoi_autosync.cli.signal.signal")
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_does_not_register_signal_handlers(self, mock_daemon_cls: MagicMock, mock_signal: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.return_value = False
+
+        main(["--once"])
+
+        mock_signal.assert_not_called()
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_returns_cleanly_when_nothing_to_sync(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.return_value = False
+
+        main(["--once"])  # should not raise or exit
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_exits_on_branch_safety_error(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.side_effect = BranchSafetyError("Refusing to target protected branch")
+
+        with pytest.raises(SystemExit, match="1"):
+            main(["--once"])
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_exits_on_file_not_found(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.side_effect = FileNotFoundError("Source directory does not exist")
+
+        with pytest.raises(SystemExit, match="1"):
+            main(["--once"])
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_exits_on_runtime_error(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.side_effect = RuntimeError("chezmoi reports no managed files")
+
+        with pytest.raises(SystemExit, match="1"):
+            main(["--once"])
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_exits_on_git_error(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.side_effect = subprocess.CalledProcessError(1, "git", stderr="push failed")
+
+        with pytest.raises(SystemExit, match="1"):
+            main(["--once"])
+
+    @patch("chezmoi_autosync.cli.Daemon")
+    def test_once_exits_on_os_error(self, mock_daemon_cls: MagicMock) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon_cls.return_value = mock_daemon
+        mock_daemon.run_once.side_effect = OSError("network down")
+
+        with pytest.raises(SystemExit, match="1"):
+            main(["--once"])

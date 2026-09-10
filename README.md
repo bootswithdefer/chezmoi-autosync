@@ -39,6 +39,12 @@ chezmoi-autosync --branch auto/my-laptop
 # Custom remote and debounce interval
 chezmoi-autosync --remote upstream --debounce 10
 
+# Perform a single sync-and-push cycle and exit (no watching)
+chezmoi-autosync --once
+
+# Preview what would be synced without re-adding, committing, or pushing
+chezmoi-autosync --once --dry-run
+
 # Debug logging
 chezmoi-autosync -v
 ```
@@ -51,6 +57,8 @@ chezmoi-autosync -v
 | `--remote` | `origin` | Git remote name |
 | `--branch` | `auto/<hostname>` | Branch to push to |
 | `--debounce` | `5.0` | Seconds to wait after last change before syncing |
+| `--once` | off | Perform a single sync-and-push cycle and exit, without watching |
+| `--dry-run` | off | Report what would be synced without re-adding, committing, or pushing |
 | `-v` / `--verbose` | off | Enable debug logging |
 
 ## Systemd user service
@@ -98,8 +106,9 @@ The daemon has multiple layers of protection against accidentally modifying `mai
 
 - **Startup validation** — refuses to start if the target branch is `main` or `master`
 - **Pre-push validation** — checks the target branch name before every push
-- **Local branch check** — verifies the local repo isn't checked out on a protected branch before committing
-- **Explicit refspec** — pushes use `HEAD:refs/heads/<branch>` to be explicit about the target
+- **Commits never touch your checkout** — the daemon writes each snapshot directly onto the `auto/<hostname>` branch using git plumbing (`write-tree` in a temporary index, `commit-tree`, then `update-ref`). It never runs `git commit` against your current checkout and never moves `HEAD`, so the source repo can stay on `main` during normal operation. Your working index is left untouched (staging happens in a throwaway index).
+- **Mergeable history** — each snapshot is parented so the `auto/<hostname>` branch stays a clean, mergeable delta against your base branch. The daemon builds on the previous auto-branch tip only while that tip is *ahead* of the base (stacked, un-merged snapshots); once the base branch moves forward — because you merged the auto branch, or committed dotfiles to `main` directly — the next snapshot **re-roots on the base branch tip** instead of stacking on a now-stale sibling. This keeps the branch reviewable and mergeable with a normal pull request and prevents it from going stale after a merge.
+- **Explicit refspec** — pushes use `refs/heads/<branch>:refs/heads/<branch>` to be explicit about the target.
 - **Force-push to auto branches** — the `auto/<hostname>` branch is a per-machine scratch branch. The local state is always authoritative, so the daemon force-pushes. This means if the remote branch diverges (e.g., from a prior session or a GitHub edit), the local version wins. This is intentional — the branch exists to capture the latest state of *this machine's* dotfiles.
 
 If any safety check fails, the daemon logs a critical error but stays running — it will retry on the next file change once the issue is resolved.
@@ -128,17 +137,40 @@ cd chezmoi-autosync
 
 # Install dev dependencies
 uv sync --group dev
-
-# Run tests
-uv run pytest
-
-# Lint and format
-uvx ruff check .
-uvx ruff format --line-length 160 .
-
-# Type check
-uvx ty check
 ```
+
+Common tasks are wrapped in a [`justfile`](https://github.com/casey/just). Run `just` (or `just --list`) to see everything available:
+
+```bash
+just test        # run the test suite (uv run pytest)
+just lint        # ruff check
+just fmt         # ruff format --line-length 160
+just fmt-check   # ruff format --check
+just typecheck   # ty check
+just check       # lint + fmt-check + typecheck + test
+
+# run the tool from the repo without installing
+just watch       # watch mode with debug logging
+just once        # single sync-and-push cycle
+just preview     # --once --dry-run (read-only)
+
+# install as a user tool + systemd service
+just install
+```
+
+The task recipes accept pass-through arguments, e.g. `just once --branch auto/laptop` or `just test -k dry_run`.
+
+If you don't have `just`, the underlying commands are plain `uv`/`uvx` invocations — see the `justfile` for the exact commands.
+
+## Installing as a service
+
+`just install` installs the tool with `uv tool install` (placing `chezmoi-autosync` in `~/.local/bin`), installs the systemd user unit, and enables + starts it:
+
+```bash
+just install
+```
+
+This is equivalent to the manual steps in [Systemd user service](#systemd-user-service) above. After installing, manage it with the usual `systemctl --user` / `journalctl --user` commands.
 
 ## License
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -46,6 +47,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Debounce interval in seconds (default: {DEFAULT_DEBOUNCE_SECONDS})",
     )
     parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Perform a single sync-and-push cycle and exit, without watching for changes.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be synced without running chezmoi re-add, committing, or pushing.",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -71,10 +82,27 @@ def main(argv: list[str] | None = None) -> None:
         remote=args.remote,
         branch=args.branch,
         debounce_seconds=args.debounce,
+        dry_run=args.dry_run,
     )
 
+    log = logging.getLogger(__name__)
+
+    if args.once:
+        try:
+            daemon.run_once()
+        except (FileNotFoundError, BranchSafetyError, RuntimeError) as exc:
+            log.error("%s", exc)
+            sys.exit(1)
+        except subprocess.CalledProcessError as exc:
+            log.error("git operation failed (exit %d): %s", exc.returncode, exc.stderr.strip() if exc.stderr else "no details")
+            sys.exit(1)
+        except OSError as exc:
+            log.error("%s", exc)
+            sys.exit(1)
+        return
+
     def _handle_signal(signum: int, _frame: object) -> None:
-        logging.getLogger(__name__).info("Received signal %d, shutting down.", signum)
+        log.info("Received signal %d, shutting down.", signum)
         daemon.stop()
 
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -83,7 +111,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         daemon.run()
     except (FileNotFoundError, BranchSafetyError, RuntimeError) as exc:
-        logging.getLogger(__name__).error("%s", exc)
+        log.error("%s", exc)
         sys.exit(1)
     except KeyboardInterrupt:
         daemon.stop()
