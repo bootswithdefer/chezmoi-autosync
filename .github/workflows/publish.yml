@@ -1,0 +1,84 @@
+name: Publish to PyPI
+
+# Publishes on a version tag (v*) using PyPI "trusted publishing" via OIDC —
+# no PYPI_API_TOKEN secret is stored, and PEP 740 attestations (provenance) are
+# attached automatically by pypa/gh-action-pypi-publish.
+#
+# One-time setup on pypi.org (the project can be registered as a "pending"
+# publisher before it exists, and is created on first publish):
+#   pypi.org -> Account settings -> Publishing -> Add a pending publisher
+#     -> GitHub Actions:
+#        Owner:              bootswithdefer
+#        Repository:         chezmoi-autosync
+#        Workflow filename:  publish.yml
+#        Environment name:   pypi
+#   Then require manual approval on the "pypi" environment:
+#     repo Settings -> Environments -> pypi -> Required reviewers.
+#
+# Release flow:
+#   1. bump "version" in pyproject.toml
+#   2. git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      # Guard against publishing a tag whose version does not match the package
+      # metadata. Skipped on manual (workflow_dispatch) runs that are not tags.
+      - name: Verify tag matches pyproject.toml version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(uv version --short)"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::Tag v$tag does not match pyproject.toml version $pkg"
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    # Only publish from a version tag, never from a manual dispatch on a branch.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/chezmoi-autosync
+    permissions:
+      id-token: write # mandatory for OIDC trusted publishing
+    steps:
+      - name: Download the dists
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
