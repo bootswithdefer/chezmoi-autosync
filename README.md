@@ -1,5 +1,8 @@
 # chezmoi-autosync
 
+[![PyPI version](https://img.shields.io/pypi/v/chezmoi-autosync.svg)](https://pypi.org/project/chezmoi-autosync/)
+[![Python versions](https://img.shields.io/pypi/pyversions/chezmoi-autosync.svg)](https://pypi.org/project/chezmoi-autosync/)
+
 Daemon that watches your chezmoi-managed dotfiles for local edits and automatically pushes them to a hostname-based branch for review. Never lose a dotfile change because you forgot to commit.
 
 ## How it works
@@ -156,6 +159,9 @@ just preview     # --once --dry-run (read-only)
 
 # install as a user tool + systemd service
 just install
+
+# cut a release: tag the current pyproject.toml version and push (triggers PyPI publish)
+just release
 ```
 
 The task recipes accept pass-through arguments, e.g. `just once --branch auto/laptop` or `just test -k dry_run`.

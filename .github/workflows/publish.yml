@@ -15,6 +15,14 @@ name: Publish to PyPI
 #   Then require manual approval on the "pypi" environment:
 #     repo Settings -> Environments -> pypi -> Required reviewers.
 #
+# Optional TestPyPI dry-run (publish-to-testpypi job below):
+#   Register a second pending publisher on test.pypi.org with the SAME owner,
+#   repo, and workflow filename, but Environment name "testpypi", and create a
+#   matching "testpypi" GitHub Environment. The TestPyPI job runs only on manual
+#   dispatch (workflow_dispatch), so it never fails automatically before it is
+#   configured. TestPyPI rejects re-uploading an existing version, so bump the
+#   version first if a dry-run for that version was already pushed.
+#
 # Release flow:
 #   1. bump "version" in pyproject.toml
 #   2. git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
@@ -82,3 +90,29 @@ jobs:
 
       - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  publish-to-testpypi:
+    name: Publish to TestPyPI (dry run)
+    # Opt-in only: runs on manual dispatch so it never fails automatically
+    # before the TestPyPI trusted publisher + "testpypi" environment exist.
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/chezmoi-autosync
+    permissions:
+      id-token: write # mandatory for OIDC trusted publishing
+    steps:
+      - name: Download the dists
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish distribution to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
